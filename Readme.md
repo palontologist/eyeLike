@@ -1,19 +1,42 @@
 ## eyeLike
-An OpenCV based webcam gaze tracker based on a simple image gradient-based eye center algorithm by Fabian Timm.
+An OpenCV based webcam gaze tracker based on a simple image gradient-based eye center algorithm by Fabian Timm, extended with **eye health monitoring**, **guided eye exercises**, and **session logging**.
+
+## Features
+
+### Eye Health Monitoring (automatic)
+- **Blink detection** — rolling Y-position variance flags each blink; tracks blink rate (normal: 15–20/min) and average blink duration.
+- **Gaze-stability / nystagmus detection** — rolling position variance over 30 frames flags high-frequency oscillations.
+- **Eye-openness asymmetry** — compares left/right pupil Y-fraction within the eye ROI; flags ptosis-like differences.
+- **Plain-language advice** — printed on demand with `[h]`, e.g. *"Blink rate below normal — consider lubricating eye drops."*
+
+### Eye Exercise Module (press `[e]` to start)
+| # | Exercise | Description |
+|---|----------|-------------|
+| 1 | **Saccadic** | Follow target dots that jump to 5 fixed positions (centre, left, right, up, down). Score = % frames on-target. |
+| 2 | **Smooth Pursuit** | Track a dot moving in a figure-8 (Lissajous) pattern. Score = % frames on-target. |
+| 3 | **Focus Shifting** | Alternate near/far focus on 10-second cues. |
+| 4 | **Palming Rest** | 20-second countdown; close eyes and cup palms over them. |
+| 5 | **20-20-20 Reminder** | Triggered automatically every 20 minutes; 20-second look-away countdown. |
+
+State machine: `IDLE → CALIBRATE (3 s) → EXERCISE (30 s) → REST (5 s) → RESULTS`
+
+### Session Logging
+- Timestamped CSV file created automatically (e.g. `session_2026-05-01_22-32-42.csv`).
+- Per-frame rows: timestamp, left/right pupil X/Y, blink flag.
+- Exercise results appended as comment rows.
+- Full health report written on `[q]`.
+
+## Controls
+| Key | Action |
+|-----|--------|
+| `e` | Start the first exercise / advance to the next exercise |
+| `h` | Print health summary to the console |
+| `q` | Quit, save session CSV, print log path |
+| `c` | Quit (no log save) |
+| `f` | Save current frame as `frame.png` |
 
 ## DISCLAIMER
-**This does not track gaze yet.** It is basically just a developer reference implementation of Fabian Timm's algorithm that shows some debugging windows with points on your pupils.
-
-If you want cheap gaze tracking and don't mind hardware check out [The Eye Tribe](https://theeyetribe.com/).
-If you want webcam-based eye tracking contact [Xlabs](http://xlabsgaze.com/) or use their chrome plugin and SDK.
-If you're looking for open source your only real bet is [Pupil](http://pupil-labs.com/) but that requires an expensive hardware headset.
-
-## Status
-The eye center tracking works well but I don't have a reference point like eye corner yet so it can't actually track
-where the user is looking.
-
-If anyone with more experience than me has ideas on how to effectively track a reference point or head pose
-so that the gaze point on the screen can be calculated contact me.
+Eye tracking is approximate (no gaze calibration). Exercise scores reflect relative pupil movement within the detected face region. This tool is for wellness and vision-training purposes only and is **not** a medical device.
 
 ## Building
 

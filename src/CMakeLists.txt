@@ -1,5 +1,14 @@
 #find_library(MGL mgl PATHS /usr/local/lib)
 
-ADD_EXECUTABLE( eyeLike main.cpp findEyeCenter.cpp findEyeCenter.h findEyeCorner.cpp findEyeCorner.h constants.h helpers.cpp helpers.h)
+ADD_EXECUTABLE( eyeLike
+    main.cpp
+    findEyeCenter.cpp findEyeCenter.h
+    findEyeCorner.cpp findEyeCorner.h
+    constants.h
+    helpers.cpp helpers.h
+    eyeHealth.cpp eyeHealth.h
+    exercises.cpp exercises.h
+    sessionLogger.cpp sessionLogger.h
+)
 TARGET_LINK_LIBRARIES( eyeLike ${OpenCV_LIBS} )
 #target_link_libraries( eyeLike ${MGL})

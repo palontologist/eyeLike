@@ -10,6 +10,9 @@
 #include "constants.h"
 #include "findEyeCenter.h"
 #include "findEyeCorner.h"
+#include "eyeHealth.h"
+#include "exercises.h"
+#include "sessionLogger.h"
 
 /* Attempt at supporting openCV version 4.0.1 or higher */
 #if CV_MAJOR_VERSION >= 4
@@ -23,8 +26,18 @@
 /** Constants **/
 
 
+/** Per-frame eye data returned by findEyes / detectAndDisplay */
+struct EyeData {
+    cv::Point leftPupil;    // face-relative pixel coords
+    cv::Point rightPupil;
+    cv::Rect  faceRect;     // face bounding box in the full frame
+    int       eyeROIHeightL;
+    int       eyeROIHeightR;
+    bool      faceDetected;
+};
+
 /** Function Headers */
-void detectAndDisplay( cv::Mat frame );
+EyeData detectAndDisplay( cv::Mat frame );
 
 /** Global variables */
 //-- Note, either copy these two files from opencv/data/haarscascades to your current folder, or change these locations
@@ -35,6 +48,12 @@ std::string face_window_name = "Capture - Face";
 cv::RNG rng(12345);
 cv::Mat debugImage;
 cv::Mat skinCrCbHist = cv::Mat::zeros(cv::Size(256, 256), CV_8UC1);
+
+// Health & exercise singletons
+EyeHealthMonitor healthMonitor;
+ExerciseEngine   exerciseEngine;
+SessionLogger    sessionLogger;
+std::vector<ExerciseResult> sessionResults;
 
 /**
  * @function main
@@ -53,15 +72,11 @@ int main( int argc, const char** argv ) {
   cv::namedWindow("Left Eye",CV_WINDOW_NORMAL);
   cv::moveWindow("Left Eye", 10, 800);
 
-  /* As the matrix dichotomy will not be applied, these windows are useless.
-  cv::namedWindow("aa",CV_WINDOW_NORMAL);
-  cv::moveWindow("aa", 10, 800);
-  cv::namedWindow("aaa",CV_WINDOW_NORMAL);
-  cv::moveWindow("aaa", 10, 800);*/
-
   createCornerKernels();
   ellipse(skinCrCbHist, cv::Point(113, 155), cv::Size(23, 15),
           43.0, 0.0, 360.0, cv::Scalar(255, 255, 255), -1);
+
+  printf("Controls: [e] start/next exercise  [h] print health summary  [q] quit & save log\n");
 
   // I make an attempt at supporting both 2.x and 3.x OpenCV
 #if CV_MAJOR_VERSION < 3
@@ -81,7 +96,49 @@ int main( int argc, const char** argv ) {
 
       // Apply the classifier to the frame
       if( !frame.empty() ) {
-        detectAndDisplay( frame );
+        double timestamp = static_cast<double>(cv::getTickCount()) /
+                           cv::getTickFrequency();
+
+        EyeData eyeData = detectAndDisplay( frame );
+
+        if (eyeData.faceDetected) {
+          healthMonitor.update(eyeData.leftPupil, eyeData.rightPupil,
+                               eyeData.eyeROIHeightL, eyeData.eyeROIHeightR,
+                               timestamp);
+
+          exerciseEngine.update(eyeData.leftPupil, eyeData.rightPupil,
+                                eyeData.faceRect, frame.size(), timestamp);
+
+          // Draw exercise overlay on top of debugImage
+          exerciseEngine.drawOverlay(debugImage, eyeData.faceRect, timestamp);
+
+          // Collect completed exercise result
+          ExerciseState es = exerciseEngine.getState();
+          if (es == STATE_RESULTS) {
+            ExerciseResult r = exerciseEngine.getLastResult();
+            if (r.framesTotal > 0) {
+              sessionResults.push_back(r);
+              sessionLogger.logExerciseResult(r);
+            }
+          }
+
+          BlinkStats bs = healthMonitor.getBlinkStats();
+          sessionLogger.logFrame(timestamp,
+                                 eyeData.leftPupil.x,  eyeData.leftPupil.y,
+                                 eyeData.rightPupil.x, eyeData.rightPupil.y,
+                                 bs.totalBlinks > 0 && bs.blinksPerMinute > 0);
+        }
+
+        // HUD: blink count overlay
+        {
+          BlinkStats bs = healthMonitor.getBlinkStats();
+          char buf[64];
+          snprintf(buf, sizeof(buf), "Blinks: %d  (%.1f/min)",
+                   bs.totalBlinks, bs.blinksPerMinute);
+          cv::putText(debugImage, buf, cv::Point(8, debugImage.rows - 8),
+                      cv::FONT_HERSHEY_SIMPLEX, 0.5,
+                      cv::Scalar(0, 220, 220), 1);
+        }
       }
       else {
         printf(" --(!) No captured frame -- Break!");
@@ -95,7 +152,48 @@ int main( int argc, const char** argv ) {
       if( (char)c == 'f' ) {
         imwrite("frame.png",frame);
       }
-
+      if( (char)c == 'e' ) {
+        // Start or advance to next exercise
+        double timestamp = static_cast<double>(cv::getTickCount()) /
+                           cv::getTickFrequency();
+        if (!exerciseEngine.isActive()) {
+          exerciseEngine.startExercise(EXERCISE_SACCADE, timestamp);
+          printf("[Exercise] Starting: Saccadic Exercise\n");
+        } else {
+          exerciseEngine.nextExercise(timestamp);
+          printf("[Exercise] Next exercise started.\n");
+        }
+      }
+      if( (char)c == 'h' ) {
+        // Print health summary to console
+        HealthSummary summary = healthMonitor.getSummary();
+        BlinkStats    &bs     = summary.blinks;
+        PupilSymmetry &ps     = summary.symmetry;
+        GazeStability &gs     = summary.stability;
+        printf("\n===== Eye Health Summary =====\n");
+        printf("  Blinks: %d (%.1f/min, avg %.0f ms)\n",
+               bs.totalBlinks, bs.blinksPerMinute, bs.avgBlinkDurationMs);
+        printf("  Low blink rate:  %s\n", bs.lowBlinkRate  ? "YES" : "no");
+        printf("  High blink rate: %s\n", bs.highBlinkRate ? "YES" : "no");
+        printf("  Pupil openness L/R: %.2f / %.2f  asymmetry: %s\n",
+               ps.leftOpennessRatio, ps.rightOpennessRatio,
+               ps.asymmetryDetected ? "YES" : "no");
+        printf("  Gaze variance X=%.1f Y=%.1f  nystagmus: %s\n",
+               gs.varianceX, gs.varianceY,
+               gs.nystagmusDetected ? "YES" : "no");
+        printf("  Advice:\n");
+        for (const std::string &a : summary.advice)
+          printf("    - %s\n", a.c_str());
+        printf("==============================\n\n");
+      }
+      if( (char)c == 'q' ) {
+        // Save session report and quit
+        HealthSummary summary = healthMonitor.getSummary();
+        sessionLogger.writeReport(summary, sessionResults);
+        printf("[Session] Log saved to: %s\n",
+               sessionLogger.getFilePath().c_str());
+        break;
+      }
     }
   }
 
@@ -104,7 +202,11 @@ int main( int argc, const char** argv ) {
   return 0;
 }
 
-void findEyes(cv::Mat frame_gray, cv::Rect face) {
+EyeData findEyes(cv::Mat frame_gray, cv::Rect face) {
+  EyeData data;
+  data.faceRect     = face;
+  data.faceDetected = true;
+
   cv::Mat faceROI = frame_gray(face);
   cv::Mat debugFace = faceROI;
 
@@ -120,6 +222,9 @@ void findEyes(cv::Mat frame_gray, cv::Rect face) {
                          eye_region_top,eye_region_width,eye_region_height);
   cv::Rect rightEyeRegion(face.width - eye_region_width - face.width*(kEyePercentSide/100.0),
                           eye_region_top,eye_region_width,eye_region_height);
+
+  data.eyeROIHeightL = eye_region_height;
+  data.eyeROIHeightR = eye_region_height;
 
   //-- Find Eye Centers
   cv::Point leftPupil = findEyeCenter(faceROI,leftEyeRegion,"Left Eye");
@@ -156,6 +261,9 @@ void findEyes(cv::Mat frame_gray, cv::Rect face) {
   circle(debugFace, rightPupil, 3, 1234);
   circle(debugFace, leftPupil, 3, 1234);
 
+  data.leftPupil  = leftPupil;
+  data.rightPupil = rightPupil;
+
   //-- Find Eye Corners
   if (kEnableEyeCorner) {
     cv::Point2f leftRightCorner = findEyeCorner(faceROI(leftRightCornerRegion), true, false);
@@ -177,9 +285,7 @@ void findEyes(cv::Mat frame_gray, cv::Rect face) {
   }
 
   imshow(face_window_name, faceROI);
-//  cv::Rect roi( cv::Point( 0, 0 ), faceROI.size());
-//  cv::Mat destinationROI = debugImage( roi );
-//  faceROI.copyTo( destinationROI );
+  return data;
 }
 
 
@@ -207,7 +313,10 @@ cv::Mat findSkin (cv::Mat &frame) {
 /**
  * @function detectAndDisplay
  */
-void detectAndDisplay( cv::Mat frame ) {
+EyeData detectAndDisplay( cv::Mat frame ) {
+  EyeData emptyData;
+  emptyData.faceDetected = false;
+
   std::vector<cv::Rect> faces;
   //cv::Mat frame_gray;
 
@@ -222,12 +331,13 @@ void detectAndDisplay( cv::Mat frame ) {
   face_cascade.detectMultiScale( frame_gray, faces, 1.1, 2, 0|CV_HAAR_SCALE_IMAGE|CV_HAAR_FIND_BIGGEST_OBJECT, cv::Size(150, 150) );
 //  findSkin(debugImage);
 
-  for( int i = 0; i < faces.size(); i++ )
+  for( int i = 0; i < (int)faces.size(); i++ )
   {
     rectangle(debugImage, faces[i], 1234);
   }
   //-- Show what you got
   if (faces.size() > 0) {
-    findEyes(frame_gray, faces[0]);
+    return findEyes(frame_gray, faces[0]);
   }
+  return emptyData;
 }
