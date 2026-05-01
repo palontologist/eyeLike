@@ -55,7 +55,7 @@ void EyeHealthMonitor::detectBlink(double timestampSec) {
     } else if (inBlink && stdDev <= kBlinkYStdDevThreshold) {
         inBlink = false;
         double durationMs = (timestampSec - blinkStartTime) * 1000.0;
-        // Sanity window: 50–1000 ms
+        // Sanity window: 50-1000 ms
         if (durationMs >= 50.0 && durationMs <= 1000.0) {
             ++totalBlinks;
             blinkDurations.push_back(durationMs);
@@ -144,6 +144,10 @@ HealthSummary EyeHealthMonitor::getSummary() const {
             "Eye metrics look normal. Keep up the good work!");
 
     return summary;
+}
+
+bool EyeHealthMonitor::isInBlink() const {
+    return inBlink;
 }
 
 void EyeHealthMonitor::reset(double timestampSec) {

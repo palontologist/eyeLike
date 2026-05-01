@@ -50,6 +50,8 @@ public:
     PupilSymmetry getPupilSymmetry()  const;
     GazeStability getGazeStability()  const;
     HealthSummary getSummary()        const;
+    // True when a blink is currently being detected in the live frame stream.
+    bool          isInBlink()         const;
 
     // Reset all accumulators (start a fresh session).
     void reset(double timestampSec);
