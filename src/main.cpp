@@ -106,15 +106,16 @@ int main( int argc, const char** argv ) {
                                eyeData.eyeROIHeightL, eyeData.eyeROIHeightR,
                                timestamp);
 
+          ExerciseState prevState = exerciseEngine.getState();
           exerciseEngine.update(eyeData.leftPupil, eyeData.rightPupil,
                                 eyeData.faceRect, frame.size(), timestamp);
 
           // Draw exercise overlay on top of debugImage
           exerciseEngine.drawOverlay(debugImage, eyeData.faceRect, timestamp);
 
-          // Collect completed exercise result
+          // Collect completed exercise result (only on the transition into STATE_RESULTS)
           ExerciseState es = exerciseEngine.getState();
-          if (es == STATE_RESULTS) {
+          if (prevState != STATE_RESULTS && es == STATE_RESULTS) {
             ExerciseResult r = exerciseEngine.getLastResult();
             if (r.framesTotal > 0) {
               sessionResults.push_back(r);
@@ -122,11 +123,10 @@ int main( int argc, const char** argv ) {
             }
           }
 
-          BlinkStats bs = healthMonitor.getBlinkStats();
           sessionLogger.logFrame(timestamp,
                                  eyeData.leftPupil.x,  eyeData.leftPupil.y,
                                  eyeData.rightPupil.x, eyeData.rightPupil.y,
-                                 bs.totalBlinks > 0 && bs.blinksPerMinute > 0);
+                                 healthMonitor.isInBlink());
         }
 
         // HUD: blink count overlay
