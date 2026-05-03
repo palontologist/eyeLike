@@ -6,6 +6,12 @@
 #include <queue>
 #include <stdio.h>
 #include <math.h>
+#include <chrono>
+#include <thread>
+#include <atomic>
+
+// HEADLESS MODE: No GUI windows, saves frames to disk
+#define HEADLESS_MODE 0
 
 #include "constants.h"
 #include "findEyeCenter.h"
@@ -45,9 +51,17 @@ cv::String face_cascade_name = "../res/haarcascade_frontalface_alt.xml";
 cv::CascadeClassifier face_cascade;
 std::string main_window_name = "Capture - Face detection";
 std::string face_window_name = "Capture - Face";
-cv::RNG rng(12345);
-cv::Mat debugImage;
-cv::Mat skinCrCbHist = cv::Mat::zeros(cv::Size(256, 256), CV_8UC1);
+  cv::RNG rng(12345);
+  cv::Mat debugImage;
+  cv::Mat skinCrCbHist = cv::Mat::zeros(cv::Size(256, 256), CV_8UC1);
+  
+  // Frame counter for headless mode
+  int frameCounter = 0;
+  int savedFrameCount = 0;
+  
+  // Show summary overlay flag
+  bool showSummaryOverlay = false;
+  double summaryDisplayStartTime = 0.0;
 
 // Health & exercise singletons
 EyeHealthMonitor healthMonitor;
@@ -64,14 +78,11 @@ int main( int argc, const char** argv ) {
 
   // Load the cascades
   if( !face_cascade.load( face_cascade_name ) ){ printf("--(!)Error loading face cascade, please change face_cascade_name in source code.\n"); return -1; };
+  #if !HEADLESS_MODE
   cv::namedWindow(main_window_name,CV_WINDOW_NORMAL);
   cv::moveWindow(main_window_name, 400, 100);
-  cv::namedWindow(face_window_name,CV_WINDOW_NORMAL);
-  cv::moveWindow(face_window_name, 10, 100);
-  cv::namedWindow("Right Eye",CV_WINDOW_NORMAL);
-  cv::moveWindow("Right Eye", 10, 600);
-  cv::namedWindow("Left Eye",CV_WINDOW_NORMAL);
-  cv::moveWindow("Left Eye", 10, 800);
+  cv::resizeWindow(main_window_name, 1280, 720);
+  #endif
 
   createCornerKernels();
   ellipse(skinCrCbHist, cv::Point(113, 155), cv::Size(23, 15),
@@ -122,7 +133,15 @@ int main( int argc, const char** argv ) {
             if (r.framesTotal > 0) {
               sessionResults.push_back(r);
               sessionLogger.logExerciseResult(r);
+              // Auto-show summary when exercise completes
+              showSummaryOverlay = true;
+              summaryDisplayStartTime = timestamp;
             }
+          }
+          
+          // Auto-hide summary after 8 seconds
+          if (showSummaryOverlay && (timestamp - summaryDisplayStartTime) > 8.0) {
+            showSummaryOverlay = false;
           }
 
           sessionLogger.logFrame(timestamp,
@@ -173,6 +192,100 @@ int main( int argc, const char** argv ) {
                       cv::FONT_HERSHEY_SIMPLEX, 0.5, symClr, 1);
           cv::putText(debugImage, timeBuf, cv::Point(debugImage.cols - 70, y2),
                       cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(0, 220, 220), 1);
+          
+          // Eye width measurements (if face detected)
+          if (eyeData.faceDetected) {
+            int leftEyeWidth = eyeData.eyeROIHeightL;
+            int rightEyeWidth = eyeData.eyeROIHeightR;
+            char eyeBuf[128];
+            snprintf(eyeBuf, sizeof(eyeBuf), "Eyes: L=%dpx R=%dpx",
+                     leftEyeWidth, rightEyeWidth);
+            cv::putText(debugImage, eyeBuf, cv::Point(debugImage.cols - 220, 20),
+                        cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(220, 220, 0), 1);
+          }
+        }
+
+        // Show summary overlay (after exercise completion or 'h' key)
+        if (showSummaryOverlay) {
+          HealthSummary summary = healthMonitor.getSummary();
+          BlinkStats    &bs     = summary.blinks;
+          PupilSymmetry &ps     = summary.symmetry;
+          GazeStability &gs     = summary.stability;
+          
+          // Semi-transparent background
+          cv::Mat overlay;
+          debugImage.copyTo(overlay);
+          cv::rectangle(overlay, cv::Rect(80, 80, debugImage.cols - 160, debugImage.rows - 160),
+                        cv::Scalar(0, 0, 0), -1);
+          cv::addWeighted(overlay, 0.85, debugImage, 0.15, 0, debugImage);
+          
+          int y = 120;
+          cv::Scalar white(255, 255, 255);
+          cv::Scalar yellow(0, 220, 220);
+          cv::Scalar green(0, 220, 0);
+          cv::Scalar red(0, 0, 220);
+          
+          // Title
+          cv::putText(debugImage, "EYE HEALTH SUMMARY", 
+                      cv::Point(debugImage.cols / 2 - 180, y),
+                      cv::FONT_HERSHEY_SIMPLEX, 0.9, yellow, 2);
+          y += 50;
+          
+          // Blink stats
+          char buf[256];
+          snprintf(buf, sizeof(buf), "Blinks: %d (%.1f/min, avg %.0f ms)",
+                   bs.totalBlinks, bs.blinksPerMinute, bs.avgBlinkDurationMs);
+          cv::putText(debugImage, buf, cv::Point(120, y),
+                      cv::FONT_HERSHEY_SIMPLEX, 0.6, white, 1);
+          y += 35;
+          
+          snprintf(buf, sizeof(buf), "Low blink rate:  %s", bs.lowBlinkRate ? "YES" : "no");
+          cv::Scalar blinkClr = bs.lowBlinkRate ? red : green;
+          cv::putText(debugImage, buf, cv::Point(120, y), cv::FONT_HERSHEY_SIMPLEX, 0.55, blinkClr, 1);
+          y += 30;
+          
+          snprintf(buf, sizeof(buf), "High blink rate: %s", bs.highBlinkRate ? "YES" : "no");
+          blinkClr = bs.highBlinkRate ? red : green;
+          cv::putText(debugImage, buf, cv::Point(120, y), cv::FONT_HERSHEY_SIMPLEX, 0.55, blinkClr, 1);
+          y += 40;
+          
+          // Pupil symmetry
+          snprintf(buf, sizeof(buf), "Pupil openness: L=%.2f  R=%.2f", 
+                   ps.leftOpennessRatio, ps.rightOpennessRatio);
+          cv::putText(debugImage, buf, cv::Point(120, y),
+                      cv::FONT_HERSHEY_SIMPLEX, 0.6, white, 1);
+          y += 35;
+          
+          snprintf(buf, sizeof(buf), "Asymmetry: %s", ps.asymmetryDetected ? "DETECTED" : "Normal");
+          cv::Scalar symClr = ps.asymmetryDetected ? red : green;
+          cv::putText(debugImage, buf, cv::Point(120, y), cv::FONT_HERSHEY_SIMPLEX, 0.55, symClr, 1);
+          y += 40;
+          
+          // Gaze stability
+          snprintf(buf, sizeof(buf), "Gaze variance: X=%.1f  Y=%.1f", gs.varianceX, gs.varianceY);
+          cv::putText(debugImage, buf, cv::Point(120, y),
+                      cv::FONT_HERSHEY_SIMPLEX, 0.6, white, 1);
+          y += 35;
+          
+          snprintf(buf, sizeof(buf), "Nystagmus: %s", gs.nystagmusDetected ? "DETECTED" : "Normal");
+          cv::Scalar stabClr = gs.nystagmusDetected ? red : green;
+          cv::putText(debugImage, buf, cv::Point(120, y), cv::FONT_HERSHEY_SIMPLEX, 0.55, stabClr, 1);
+          y += 50;
+          
+          // Advice
+          cv::putText(debugImage, "Advice:", cv::Point(120, y),
+                      cv::FONT_HERSHEY_SIMPLEX, 0.6, yellow, 1);
+          y += 30;
+          for (const std::string &a : summary.advice) {
+            cv::putText(debugImage, "- " + a, cv::Point(140, y),
+                        cv::FONT_HERSHEY_SIMPLEX, 0.5, white, 1);
+            y += 25;
+          }
+          
+          // Close instruction
+          cv::putText(debugImage, "Press [H] to close or wait 8 seconds",
+                      cv::Point(debugImage.cols / 2 - 200, debugImage.rows - 120),
+                      cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(180, 180, 180), 1);
         }
 
         if (!eyeData.faceDetected) {
@@ -190,12 +303,90 @@ int main( int argc, const char** argv ) {
                       cv::FONT_HERSHEY_SIMPLEX, 0.8,
                       cv::Scalar(0, 80, 255), 2);
         }
+
+        // Show startup instructions overlay for first 10 seconds
+        {
+          double elapsedSec = timestamp - hudTimerStart;
+          if (elapsedSec < 10.0) {
+            // Semi-transparent overlay
+            cv::Mat overlay;
+            debugImage.copyTo(overlay);
+            cv::rectangle(overlay, cv::Rect(50, 50, debugImage.cols - 100, debugImage.rows - 100),
+                          cv::Scalar(0, 0, 0), -1);
+            cv::addWeighted(overlay, 0.7, debugImage, 0.3, 0, debugImage);
+            
+            // Title
+            cv::putText(debugImage, "EyeLike - Eye Health & Exercise App",
+                        cv::Point(debugImage.cols / 2 - 280, 100),
+                        cv::FONT_HERSHEY_SIMPLEX, 0.9, cv::Scalar(0, 220, 220), 2);
+            
+            // Instructions
+            std::vector<std::string> instructions = {
+              "This app tracks your eyes and guides you through exercises",
+              "",
+              "CONTROLS:",
+              "  [E]  Start exercise / Next exercise",
+              "  [H]  Print health summary",
+              "  [Q]  Quit and save session log",
+              "",
+              "EXERCISES:",
+              "  1. Saccadic - Look at green dots as they appear",
+              "  2. Smooth Pursuit - Follow the moving green dot",
+              "  3. Focus Shift - Alternate near/far focus",
+              "  4. Palming - Rest eyes with palms over them",
+              "  5. 20-20-20 - Look 20 feet away for 20 seconds",
+              "",
+              "Press [E] to start your first exercise!"
+            };
+            
+            int y = 150;
+            for (const auto& line : instructions) {
+              cv::Scalar color = cv::Scalar(255, 255, 255);
+              if (line.find("[E]") != std::string::npos || line.find("Press [E]") != std::string::npos) {
+                color = cv::Scalar(0, 255, 0);
+              }
+              cv::putText(debugImage, line, cv::Point(80, y),
+                          cv::FONT_HERSHEY_SIMPLEX, 0.55, color, 1);
+              y += 28;
+            }
+          }
+        }
       }
       else {
         printf(" --(!) No captured frame -- Break!");
         break;
       }
 
+      #if HEADLESS_MODE
+      // Save frames periodically in headless mode
+      frameCounter++;
+      if (frameCounter % 30 == 0) {
+        char filename[64];
+        snprintf(filename, sizeof(filename), "frame_%04d.png", savedFrameCount++);
+        imwrite(filename, debugImage);
+        printf("[Headless] Saved %s\n", filename);
+      }
+      
+      // Auto-exercise mode: start saccade exercise at frame 100
+      if (frameCounter == 100) {
+        double timestamp = static_cast<double>(cv::getTickCount()) /
+                           cv::getTickFrequency();
+        exerciseEngine.startExercise(EXERCISE_SACCADE, timestamp);
+        printf("[Exercise] Auto-starting: Saccadic Exercise\n");
+      }
+      
+      // Auto-quit after 500 frames (~50 seconds)
+      if (frameCounter >= 500) {
+        printf("[Headless] Auto-quit after 500 frames\n");
+        HealthSummary summary = healthMonitor.getSummary();
+        sessionLogger.writeReport(summary, sessionResults);
+        printf("[Session] Log saved to: %s\n",
+               sessionLogger.getFilePath().c_str());
+        break;
+      }
+      
+      std::this_thread::sleep_for(std::chrono::milliseconds(10));
+      #else
       imshow(main_window_name,debugImage);
 
       int c = cv::waitKey(10);
@@ -216,7 +407,13 @@ int main( int argc, const char** argv ) {
         }
       }
       if( (char)c == 'h' ) {
-        // Print health summary to console
+        // Toggle health summary overlay
+        showSummaryOverlay = !showSummaryOverlay;
+        if (showSummaryOverlay) {
+          summaryDisplayStartTime = static_cast<double>(cv::getTickCount()) / cv::getTickFrequency();
+        }
+        
+        // Also print to console
         HealthSummary summary = healthMonitor.getSummary();
         BlinkStats    &bs     = summary.blinks;
         PupilSymmetry &ps     = summary.symmetry;
@@ -245,6 +442,7 @@ int main( int argc, const char** argv ) {
                sessionLogger.getFilePath().c_str());
         break;
       }
+      #endif
     }
   }
 
@@ -335,7 +533,6 @@ EyeData findEyes(cv::Mat frame_gray, cv::Rect face) {
     circle(faceROI, rightRightCorner, 3, 200);
   }
 
-  imshow(face_window_name, faceROI);
   return data;
 }
 

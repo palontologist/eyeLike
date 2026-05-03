@@ -26,6 +26,28 @@ State machine: `IDLE → CALIBRATE (3 s) → EXERCISE (30 s) → REST (5 s) → 
 - Exercise results appended as comment rows.
 - Full health report written on `[q]`.
 
+## Screenshots
+
+### Main Interface - Eye Tracking
+![Main Interface](src/Capture%20-%20Face%20detection.png)
+*Real-time eye tracking with pupil detection, blink monitoring, and gaze stability metrics.*
+
+### Eye Health Summary
+![Health Summary](src/summary.png)
+*On-screen health summary showing blink rate, pupil symmetry, gaze stability, and personalized advice.*
+
+### Exercise Mode
+![Exercise Mode](src/exercise.png)
+*Guided eye exercises with visual targets. Follow the green dots to complete the exercise.*
+
+### Health Metrics Display
+![Health Display](src/health.png)
+*Live health metrics overlay showing eye measurements and real-time status indicators.*
+
+### Look Mode
+![Look Mode](src/look.png)
+*20-20-20 reminder mode - look at something 20 feet away for 20 seconds.*
+
 ## Controls
 | Key | Action |
 |-----|--------|
