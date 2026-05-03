@@ -235,8 +235,9 @@ void ExerciseEngine::update(cv::Point leftPupil, cv::Point rightPupil,
         // Average pupil position in face-relative coordinates
         cv::Point avgPupil((leftPupil.x + rightPupil.x) / 2,
                            (leftPupil.y + rightPupil.y) / 2);
-        double dist = cv::norm(avgPupil - target);
-        if (dist < kExerciseToleranceRadius) ++framesOnTarget;
+        double dist      = cv::norm(avgPupil - target);
+        double tolerance = faceRect.width * kExerciseToleranceFraction;
+        if (dist < tolerance) ++framesOnTarget;
     }
 }
 

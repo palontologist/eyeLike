@@ -54,6 +54,7 @@ EyeHealthMonitor healthMonitor;
 ExerciseEngine   exerciseEngine;
 SessionLogger    sessionLogger;
 std::vector<ExerciseResult> sessionResults;
+double hudTimerStart = 0.0;  // wall-clock start for HUD elapsed timer
 
 /**
  * @function main
@@ -98,6 +99,7 @@ int main( int argc, const char** argv ) {
       if( !frame.empty() ) {
         double timestamp = static_cast<double>(cv::getTickCount()) /
                            cv::getTickFrequency();
+        if (hudTimerStart == 0.0) hudTimerStart = timestamp;
 
         EyeData eyeData = detectAndDisplay( frame );
 
@@ -131,13 +133,62 @@ int main( int argc, const char** argv ) {
 
         // HUD: blink count overlay
         {
-          BlinkStats bs = healthMonitor.getBlinkStats();
-          char buf[64];
+          BlinkStats    bs = healthMonitor.getBlinkStats();
+          GazeStability gs = healthMonitor.getGazeStability();
+          PupilSymmetry ps = healthMonitor.getPupilSymmetry();
+
+          // Line 1: blink count
+          char buf[128];
           snprintf(buf, sizeof(buf), "Blinks: %d  (%.1f/min)",
                    bs.totalBlinks, bs.blinksPerMinute);
-          cv::putText(debugImage, buf, cv::Point(8, debugImage.rows - 8),
+          cv::putText(debugImage, buf, cv::Point(8, debugImage.rows - 30),
                       cv::FONT_HERSHEY_SIMPLEX, 0.5,
                       cv::Scalar(0, 220, 220), 1);
+
+          // Line 2: stability | symmetry | elapsed time
+          double elapsedSec = static_cast<double>(cv::getTickCount()) /
+                              cv::getTickFrequency() - hudTimerStart;
+          if (elapsedSec < 0.0) elapsedSec = 0.0;
+          int eMin = static_cast<int>(elapsedSec) / 60;
+          int eSec = static_cast<int>(elapsedSec) % 60;
+
+          cv::Scalar stabClr = gs.nystagmusDetected
+                               ? cv::Scalar(0, 0, 220)
+                               : cv::Scalar(0, 220, 0);
+          cv::Scalar symClr  = ps.asymmetryDetected
+                               ? cv::Scalar(0, 0, 220)
+                               : cv::Scalar(0, 220, 0);
+
+          char stabBuf[32], symBuf[32], timeBuf[32];
+          snprintf(stabBuf, sizeof(stabBuf), "Stability: %s",
+                   gs.nystagmusDetected ? "UNSTABLE" : "OK");
+          snprintf(symBuf, sizeof(symBuf), "Sym: %s",
+                   ps.asymmetryDetected ? "ASYM" : "OK");
+          snprintf(timeBuf, sizeof(timeBuf), "%02d:%02d", eMin, eSec);
+
+          int y2 = debugImage.rows - 8;
+          cv::putText(debugImage, stabBuf, cv::Point(8, y2),
+                      cv::FONT_HERSHEY_SIMPLEX, 0.5, stabClr, 1);
+          cv::putText(debugImage, symBuf, cv::Point(200, y2),
+                      cv::FONT_HERSHEY_SIMPLEX, 0.5, symClr, 1);
+          cv::putText(debugImage, timeBuf, cv::Point(debugImage.cols - 70, y2),
+                      cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(0, 220, 220), 1);
+        }
+
+        if (!eyeData.faceDetected) {
+          // "No face detected" centred warning
+          const std::string noFaceMsg = "No face detected";
+          int baseline = 0;
+          cv::Size sz = cv::getTextSize(noFaceMsg, cv::FONT_HERSHEY_SIMPLEX,
+                                        0.8, 2, &baseline);
+          cv::Point org((debugImage.cols - sz.width) / 2,
+                        (debugImage.rows + sz.height) / 2);
+          cv::putText(debugImage, noFaceMsg, org + cv::Point(1, 1),
+                      cv::FONT_HERSHEY_SIMPLEX, 0.8,
+                      cv::Scalar(0, 0, 0), 3);
+          cv::putText(debugImage, noFaceMsg, org,
+                      cv::FONT_HERSHEY_SIMPLEX, 0.8,
+                      cv::Scalar(0, 80, 255), 2);
         }
       }
       else {
